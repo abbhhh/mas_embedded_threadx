@@ -122,7 +122,7 @@ The existing non-blocking servo sequence engine remains responsible for reload s
 - Sequence 1 transfers dart C from the left storage position.
 - Sequence 2 transfers dart D from the right storage position.
 
-All servo target angles and all step wait times move to `apps/darts/darts_def.h`. The sequence tables live in `shoot_mode.c` and reference only named macros.
+Servo target angles are robot-level mechanical calibration values in `apps/darts/darts_def.h`. Reload sequence tables and their step wait times live in `darts_servo_func.c`.
 
 Reload-sequence completion advances the shot state. A sequence error or timeout raises a latched firing fault.
 
@@ -190,27 +190,40 @@ Entering `FAULT` performs these actions once:
 
 Remote commands cannot clear a fault. Recovery requires a controller restart and manual verification that the mechanism is at home.
 
-## Configurable Parameters
+## Parameter Ownership
 
-All unverified mechanical and control values are macros in `apps/darts/darts_def.h`, grouped by purpose:
+Parameter placement follows the sentry application style. Robot-wide definitions contain mechanical calibration and public command types only. Module-internal control values stay beside the code that uses them.
 
-- task period and remote channel values;
-- origin capture speed and stable time;
-- left and right direction signs;
+`apps/darts/darts_def.h` contains:
+
+- M3508 reduction ratio;
+- left and right motor direction signs;
 - left and right cocking travel;
-- M3508 reduction ratio and torque limit;
-- left and right angle PID parameters;
-- left and right speed PID parameters;
-- cocking and home position tolerances;
-- low-speed and synchronization tolerances;
-- stable-position duration;
-- cocking, homing, reload, and total-salvo timeouts;
-- trigger lock and fire angles;
-- trigger lock and fire dwell times;
-- lift, transfer, and gripper angles for every reload step; and
-- wait time for every reload step.
+- lift, transfer, gripper, and trigger calibration angles;
+- `shoot_mode_e`, `loader_mode_e`, and fault enums; and
+- `Shoot_Ctrl_Cmd_t`.
 
-Initial macro values are conservative placeholders. Hardware testing must tune travel, PID gains, tolerances, servo angles, and timing before live firing.
+`robot_control.c` contains control-task stack size, priority, and period.
+
+`robot_func.c` contains the selected remote channel and directly uses the shared SBUS switch constants.
+
+`shoot_func.c` contains:
+
+- CAN IDs, offline timeouts, and beep identifiers;
+- M3508 torque limits and torque constants;
+- left and right angle-speed PID values; and
+- PWM pulse limits and servo working ranges.
+
+`shoot_mode.c` contains:
+
+- origin and position stability thresholds;
+- position, speed, and synchronization tolerances;
+- cocking, homing, reload, and salvo timeouts; and
+- trigger lock and fire dwell times.
+
+`darts_servo_func.c` contains reload-sequence step wait times.
+
+Unknown travel and PID values remain zero until bench calibration. Configuration validation must prevent motor movement while these values are invalid.
 
 ## Application Integration
 
@@ -219,7 +232,8 @@ The darts single-board application becomes firing-only for this change:
 - `robot_control.c` reads the remote command and calls `shoot_func()` every two ThreadX ticks.
 - Unused sentry, board-communication, INS, vision, and gimbal references are removed from the firing control path.
 - `Shoot_Ctrl_Cmd_t` uses `shoot_mode` with sentry-style naming. The remote layer produces a single `shoot_fire` request only after channel 8 has returned to its armed position.
-- `shoot_mode.c/.h` owns mode transitions, counters, timing, feedback judgement, fault latching, and reload-sequence data.
+- `shoot_mode.c/.h` owns mode transitions, counters, timing, feedback judgement, and fault latching.
+- `darts_servo_func.c/.h` owns the three reload-sequence tables and the non-blocking servo sequence engine.
 - `shoot_func.c` contains only two function definitions: `shoot_init()` and `shoot_func()`.
 - `shoot_init()` contains the actual two-M3508 and five-servo initialization, matching the sentry module style.
 - `shoot_func()` directly uses `switch (shoot_mode)` and `switch (load_mode)` to call `Motor_DJI_Start`, `Motor_DJI_Stop`, `Motor_DJI_SetRef`, `Motor_Servo_SetRef`, and the servo-sequence API.
