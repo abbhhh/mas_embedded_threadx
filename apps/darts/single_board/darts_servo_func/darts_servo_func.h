@@ -41,8 +41,7 @@ typedef enum
 } Darts_Servo_Sequence_State_e;
 
 /* 绑定状态机使用的五个舵机，所有指针由调用方负责初始化和保持有效。 */
-void Darts_Servo_Sequence_Init(Servo_Motor_t *rise_l, Servo_Motor_t *rise_r, Servo_Motor_t *tran, Servo_Motor_t *gripper,
-                               Servo_Motor_t *trigger);
+void Darts_Servo_Sequence_Init(Servo_Motor_t *rise_l, Servo_Motor_t *rise_r, Servo_Motor_t *tran, Servo_Motor_t *gripper, Servo_Motor_t *trigger);
 
 /* 启动动作序列。运行期间不能重复启动，成功返回 1，失败返回 0。 */
 uint8_t Darts_Servo_Sequence_Start(const Darts_Servo_Step_t *steps, uint8_t step_count);
@@ -55,6 +54,9 @@ void Darts_Servo_Sequence_Cancel(void);
 
 /* 查询当前运行状态和步骤索引。 */
 Darts_Servo_Sequence_State_e Darts_Servo_Sequence_GetState(void);
-uint8_t Darts_Servo_Sequence_GetStep(void);
+uint8_t                      Darts_Servo_Sequence_GetStep(void);
+
+/* 按 0/1/2 获取三套飞镖装填序列。 */
+uint8_t Darts_Servo_Reload_Get(uint8_t index, const Darts_Servo_Step_t **steps, uint8_t *step_count);
 
 #endif /* DARTS_SERVO_FUNC_H */

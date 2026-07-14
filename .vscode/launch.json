@@ -57,7 +57,7 @@
         {
             "name": "st-link",
             "cwd": "${workspaceRoot}",
-            "executable": "${workspaceRoot}/build/Debug/MAS_RM_DJIC.elf", 
+            "executable": "${workspaceRoot}/build/Debug/base.elf", 
             "request": "launch",
             "type": "cortex-debug",
             "device": "STM32F407IG",
