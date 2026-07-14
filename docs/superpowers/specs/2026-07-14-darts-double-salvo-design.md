@@ -122,34 +122,51 @@ The existing non-blocking servo sequence engine remains responsible for reload s
 - Sequence 1 transfers dart C from the left storage position.
 - Sequence 2 transfers dart D from the right storage position.
 
-All servo target angles and all step wait times move to `apps/darts/darts_def.h`. The sequence tables in `shoot_func.c` reference only named macros.
+All servo target angles and all step wait times move to `apps/darts/darts_def.h`. The sequence tables live in `shoot_mode.c` and reference only named macros.
 
 Reload-sequence completion advances the shot state. A sequence error or timeout raises a latched firing fault.
 
-## State Model
+## Mode Model
 
-The firing state machine contains these states:
+The implementation follows the existing sentry naming style. It uses separate `shoot_mode` and `load_mode` values instead of generic state and action enums.
 
-```text
-WAIT_ORIGIN
-IDLE
-MOVE_TO_COCK
-WAIT_COCK
-TRIGGER_LOCK
-WAIT_TRIGGER_LOCK
-MOVE_TO_HOME
-WAIT_HOME
-START_RELOAD
-WAIT_RELOAD
-TRIGGER_FIRE
-WAIT_FIRE
-SHOT_FINISHED
-SALVO_FINISHED
-COMPLETED
-FAULT
+```c
+typedef enum
+{
+    shoot_off = 0,
+    shoot_lock,
+    shoot_fire,
+    shoot_finished,
+    shoot_error,
+} shoot_mode_e;
+
+typedef enum
+{
+    load_origin = 0,
+    load_stop,
+    load_cock,
+    load_return,
+    load_reload,
+} loader_mode_e;
 ```
 
-State entry performs commands once. Periodic state updates check feedback, elapsed time, and fault conditions without blocking the ThreadX control task.
+The mechanical phases are represented by mode combinations:
+
+| Phase | `shoot_mode` | `load_mode` |
+|---|---|---|
+| Wait for encoder origin | `shoot_off` | `load_origin` |
+| Wait for remote request | `shoot_off` | `load_stop` |
+| Pull the dart plate | `shoot_off` | `load_cock` |
+| Lock the dart plate | `shoot_lock` | `load_cock` |
+| Return synchronization motors | `shoot_lock` | `load_return` |
+| Run an optional reload sequence | `shoot_lock` | `load_reload` |
+| Fire the trigger | `shoot_fire` | `load_stop` |
+| Four darts complete | `shoot_finished` | `load_stop` |
+| Latched fault | `shoot_error` | `load_stop` |
+
+The mode module owns salvo count, shot count, reload selection, timing, feedback checks, and fault reason. It updates file-level `shoot_mode` and `load_mode` values. It does not return an `output.action` command.
+
+The first shot skips `load_reload`. The other shots select reload sequences 0, 1, and 2 through the fixed mission table. Counters advance directly when `shoot_fire` completes; separate shot-finished and salvo-finished modes are not used.
 
 ## Fault Handling
 
@@ -201,8 +218,12 @@ The darts single-board application becomes firing-only for this change:
 
 - `robot_control.c` reads the remote command and calls `shoot_func()` every two ThreadX ticks.
 - Unused sentry, board-communication, INS, vision, and gimbal references are removed from the firing control path.
-- `Shoot_Ctrl_Cmd_t` contains the fire-request event needed by the new state machine.
-- Obsolete `friction_mode` and manual `loader_mode_e` control paths are removed.
+- `Shoot_Ctrl_Cmd_t` uses `shoot_mode` with sentry-style naming. The remote layer produces a single `shoot_fire` request only after channel 8 has returned to its armed position.
+- `shoot_mode.c/.h` owns mode transitions, counters, timing, feedback judgement, fault latching, and reload-sequence data.
+- `shoot_func.c` contains only two function definitions: `shoot_init()` and `shoot_func()`.
+- `shoot_init()` contains the actual two-M3508 and five-servo initialization, matching the sentry module style.
+- `shoot_func()` directly uses `switch (shoot_mode)` and `switch (load_mode)` to call `Motor_DJI_Start`, `Motor_DJI_Stop`, `Motor_DJI_SetRef`, `Motor_Servo_SetRef`, and the servo-sequence API.
+- No `output.action`, generic state enum, or state-machine wrapper structure appears in `shoot_func.c`.
 - `gimbal_func.c` may remain empty, but it is no longer called by the darts firing task.
 
 ## Verification
@@ -211,9 +232,9 @@ Verification must include:
 
 1. A successful full firmware build for the configured `darts/single` target.
 2. Static checks that no third `loader` M3508 remains in the firing module.
-3. State-transition tests or a host-side state-machine harness covering all four shots.
+3. Host-side mode-transition tests covering all four shots.
 4. Confirmation that a held remote switch produces only one request.
 5. Confirmation that the shot plan maps reload sequences as `none, 0, 1, 2`.
 6. Fault-path checks for motor offline, motion timeout, synchronization error, and reload error.
-7. Confirmation that the fifth remote request is ignored after `COMPLETED`.
+7. Confirmation that the fifth remote request is ignored after `shoot_finished`.
 8. Bench testing without darts before any live firing test.
