@@ -387,13 +387,24 @@ void shoot_func(Shoot_Ctrl_Cmd_t *shoot_cmd)
                         Motor_Servo_SetRef(trigger,75);
                         break;
                     case load_reload :
+                        Motor_DJI_SetRef(friction_l, 0);
+                        Motor_DJI_SetRef(friction_r, 0);
+                        Motor_DJI_SetRef(loader, 0);
                         if (last_load_mode != load_reload)
                         {
                             Darts_Servo_Sequence_Start(reload_sequence,
                                                        (uint8_t)(sizeof(reload_sequence) / sizeof(reload_sequence[0])));
                         }
-                        Motor_DJI_SetRef(loader, -8000 * RPM_2_RAD_PER_SEC);
                         break;
+                    case load_ready :
+                        Motor_DJI_SetRef(friction_l, 0);
+                        Motor_DJI_SetRef(friction_r, 0);
+                        Motor_DJI_SetRef(loader, 0);
+                        Motor_Servo_SetRef(rise_l,125);
+                        Motor_Servo_SetRef(rise_r,25);
+                        Motor_Servo_SetRef(tran,75);
+                        Motor_Servo_SetRef(gripper,110);
+                        Motor_Servo_SetRef(trigger,75);    
                     default:
                         break;
                     }

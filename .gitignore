@@ -13,3 +13,7 @@ cmake-build-*/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+#环境配置文件
+.vscode/
+.zed/

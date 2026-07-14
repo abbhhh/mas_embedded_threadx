@@ -1,32 +1,15 @@
 {
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
     "version": "2.0.0",
-    "inputs": [
-        {
-            "id": "selectBoard",
-            "type": "pickString",
-            "description": "选择开发板",
-            "options": [
-                "damiao_h7",
-                "dji_c"
-            ],
-            "default": "dji_c"
-        },
-        {
-            "id": "selectProbe",
-            "type": "pickString",
-            "description": "选择调试器",
-            "options": [
-                "stlink",
-                "daplink",
-                "jlink"
-            ],
-            "default": "jlink"
-        }
-    ],
     "tasks": [
         {
-            "label": "Build damiao_h7",
+            "label": "build(debug)",
             "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "${workspaceFolder}/build/Debug",
+                "-j", "8"           
+            ],
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -34,87 +17,56 @@
             "group": {
                 "kind": "build",
                 "isDefault": true
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "focus": false,
-                "echo": true,
-                "showReuseMessage": false
-            },
-            "windows": {
-                "command": "powershell",
-                "args": [
-                    "-Command",
-                    "cmake -S ${workspaceFolder}/board/damiao_h7 -B ${workspaceFolder}/build/damiao_h7/Debug --preset Debug -G Ninja; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cmake --build ${workspaceFolder}/build/damiao_h7/Debug --config Debug -j ${env:NUMBER_OF_PROCESSORS}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Copy-Item -Path ${workspaceFolder}/build/damiao_h7/Debug/compile_commands.json -Destination ${workspaceFolder}/build/compile_commands.json -Force; Copy-Item -Path ${workspaceFolder}/build/damiao_h7/Debug/base.elf -Destination ${workspaceFolder}/build/damiao_h7.elf -Force"
-                ]
-            },
-            "linux": {
-                "command": "bash",
-                "args": [
-                    "-lc",
-                    "cmake -S ${workspaceFolder}/board/damiao_h7 -B ${workspaceFolder}/build/damiao_h7/Debug --preset Debug -G Ninja && cmake --build ${workspaceFolder}/build/damiao_h7/Debug --config Debug -j $(nproc) && cp ${workspaceFolder}/build/damiao_h7/Debug/compile_commands.json ${workspaceFolder}/build/compile_commands.json && cp ${workspaceFolder}/build/damiao_h7/Debug/base.elf ${workspaceFolder}/build/damiao_h7.elf"
-                ]
             }
         },
         {
-            "label": "Build dji_c",
+            "label": "download dap(elf)",
             "type": "shell",
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
+            "command": "openocd",
+            "args": [
+                "-f",
+                "daplink.cfg",
+                "-c",
+                "program ./build/Debug/rm_base.elf verify reset exit"
+            ],
             "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "focus": false,
-                "echo": true,
-                "showReuseMessage": false
-            },
-            "windows": {
-                "command": "powershell",
-                "args": [
-                    "-Command",
-                    "cmake -S ${workspaceFolder}/board/dji_c -B ${workspaceFolder}/build/dji_c/Debug --preset Debug -G Ninja; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; cmake --build ${workspaceFolder}/build/dji_c/Debug --config Debug -j ${env:NUMBER_OF_PROCESSORS}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Copy-Item -Path ${workspaceFolder}/build/dji_c/Debug/compile_commands.json -Destination ${workspaceFolder}/build/compile_commands.json -Force; Copy-Item -Path ${workspaceFolder}/build/dji_c/Debug/base.elf -Destination ${workspaceFolder}/build/dji_c.elf -Force"
-                ]
-            },
-            "linux": {
-                "command": "bash",
-                "args": [
-                    "-lc",
-                    "cmake -S ${workspaceFolder}/board/dji_c -B ${workspaceFolder}/build/dji_c/Debug --preset Debug -G Ninja && cmake --build ${workspaceFolder}/build/dji_c/Debug --config Debug -j $(nproc) && cp ${workspaceFolder}/build/dji_c/Debug/compile_commands.json ${workspaceFolder}/build/compile_commands.json && cp ${workspaceFolder}/build/dji_c/Debug/base.elf ${workspaceFolder}/build/dji_c.elf"
-                ]
+            "group": {
+                "kind": "build",
+                "isDefault": true
             }
         },
         {
-            "label": "Flash board",
+            "label": "JFlash Program",
             "type": "shell",
-            "problemMatcher": [],
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "focus": false,
-                "echo": true,
-                "showReuseMessage": false,
-                "close": true
-            },
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "windows": {
-                "command": "cmd",
-                "args": [
-                    "/c",
-                    "${workspaceFolder}/.vscode/flash_interactive.bat ${input:selectBoard} ${input:selectProbe}"
-                ]
-            },
-            "linux": {
-                "command": "bash",
-                "args": [
-                    "-c",
-                    "${workspaceFolder}/.vscode/flash_interactive.sh ${input:selectBoard} ${input:selectProbe}"
-                ]
+            "command": "C:/Program Files/SEGGER/JLink_V854/JFlash.exe",  // 修改为安装JFlash的路径
+            "args": [
+                "-openprj", 
+                "${workspaceFolder}/rm_base.jflash",
+                "-open",                
+                "${workspaceFolder}/build/Debug/rm_base.elf",
+                "-auto",
+                "-exit"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
             }
-        }
+        },
+        {
+            "label": "download st-link(elf)",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "st-link.cfg",
+                "-c",
+                "program ./build/Debug/rm_base.elf verify reset exit"
+            ],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
     ]
 }
