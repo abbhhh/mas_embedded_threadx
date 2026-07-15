@@ -1,7 +1,7 @@
 #include "shoot_func.h"
 
 #include "bsp_dwt.h"
-#include "darts_servo_func.h"
+#include "darts_def.h"
 #include "dsp/fast_math_functions.h"
 #include "module_offline.h"
 #include "motor_def.h"
@@ -10,7 +10,9 @@
 #include "shoot_mode.h"
 #include "tim.h"
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #define LOG_TAG "app_shoot"
 #define LOG_LVL LOG_LVL_INFO
@@ -24,11 +26,46 @@ static Servo_Motor_t *transfer;
 static Servo_Motor_t *gripper;
 static Servo_Motor_t *trigger;
 
-static shoot_mode_e  shoot_mode = shoot_off;
-static loader_mode_e load_mode  = load_origin;
-static shoot_mode_e  last_shoot_mode;
-static loader_mode_e last_load_mode;
+typedef enum
+{
+    shoot_step_idle = 0,
+    shoot_step_first_cock,
+    shoot_step_first_lock_wait,
+    shoot_step_first_return,
+    shoot_step_first_fire_wait,
+    shoot_step_second_cock,
+    shoot_step_second_lock_wait,
+    shoot_step_second_rise_down_wait,
+    shoot_step_second_gripper_wait,
+    shoot_step_second_rise_home_wait,
+    shoot_step_second_return,
+    shoot_step_second_fire_wait,
+    shoot_step_third_cock,
+    shoot_step_third_lock_wait,
+    shoot_step_third_transfer_out_wait,
+    shoot_step_third_rise_down_wait,
+    shoot_step_third_gripper_wait,
+    shoot_step_third_rise_home_wait,
+    shoot_step_third_rise_down_again_wait,
+    shoot_step_third_gripper_open_wait,
+    shoot_step_third_rise_home_final_wait,
+    shoot_step_third_return,
+    shoot_step_third_fire_wait,
+    shoot_step_fourth_cock,
+    shoot_step_fourth_lock_wait,
+    shoot_step_fourth_transfer_out_wait,
+    shoot_step_fourth_rise_down_wait,
+    shoot_step_fourth_gripper_wait,
+    shoot_step_fourth_rise_home_wait,
+    shoot_step_fourth_rise_down_again_wait,
+    shoot_step_fourth_gripper_open_wait,
+    shoot_step_fourth_rise_home_final_wait,
+    shoot_step_fourth_return,
+    shoot_step_fourth_fire_wait,
+} shoot_step_e;
 
+static shoot_step_e shoot_step = shoot_step_idle;
+volatile uint8_t enable_flag = 0;
 void shoot_init(void)
 {
     {
@@ -50,7 +87,7 @@ void shoot_init(void)
                 // --- 外环：位置环 (使用电机内部 total_angle) ---
                 .angle_PID = 
                     {
-                        .Kp = 7.51f,           
+                        .Kp = 4.51f,           
                         .Ki = 0.0f,
                         .Kd = 0.000f,          
                         .MaxOut = 6.0f,       
@@ -61,7 +98,7 @@ void shoot_init(void)
                 .speed_PID = 
                     {
                         .Kp = 0.014f,           
-                        .Ki = 0.0005f,
+                        .Ki = 0.0001f,
                         .Kd = 0.000f,          
                         .MaxOut = 4.0f,        
                         .DeadBand = 0.0f,
@@ -73,7 +110,7 @@ void shoot_init(void)
             {
                 .angle_feedback_source = 0,
                 .speed_feedback_source = 0,
-                .loop_type             = SPEED_LOOP,
+                .loop_type             = ANGLE_AND_SPEED_LOOP,
                 .feedback_reverse_flag = 0,
                 .algorithm_type        = CONTROL_PID,
             },
@@ -119,7 +156,7 @@ void shoot_init(void)
             {
                 .loop_type      = ANGLE_LOOP,
                 .algorithm_type = CONTROL_PID,
-                .enableflag     = 0U,
+                .enableflag     = 0,
             },
         .motor_init_info =
             {
@@ -172,22 +209,18 @@ void shoot_init(void)
         return;
     }
 
+    Motor_DJI_Start(friction_l);
+    Motor_DJI_Start(friction_r);
     Motor_Servo_Start(rise_left);
     Motor_Servo_Start(rise_right);
     Motor_Servo_Start(transfer);
     Motor_Servo_Start(gripper);
     Motor_Servo_Start(trigger);
-    Motor_Servo_SetRef(rise_left, 160);
-    Motor_Servo_SetRef(rise_right, 0);
+    Motor_Servo_SetRef(rise_left, 140);
+    Motor_Servo_SetRef(rise_right, 20);
     Motor_Servo_SetRef(transfer, 135);
-    Motor_Servo_SetRef(gripper, 70);
-    Motor_Servo_SetRef(trigger, 20);
-    Darts_Servo_Sequence_Init(rise_left, rise_right, transfer, gripper, trigger);
-
-
-    shoot_mode_init(&shoot_mode, &load_mode);
-    last_shoot_mode = shoot_mode;
-    last_load_mode  = load_mode;
+    Motor_Servo_SetRef(gripper, 40);
+    Motor_Servo_SetRef(trigger, 5.0f);
 
     LOG_I("darts shoot init success");
     }
@@ -198,102 +231,277 @@ void shoot_func(Shoot_Ctrl_Cmd_t *shoot_cmd)
         gripper == NULL || trigger == NULL)
         return;
 
-    Darts_Servo_Sequence_Update();
-    Darts_Servo_Sequence_State_e reload_state = Darts_Servo_Sequence_GetState();
-    Shoot_Mode_Feedback_t        feedback     = {
-                   .now_us        = BSP_DWT_GetTimeline_us(),
-                   .motors_online = Module_Offline_get_device_status(friction_l->base.offline_dev) == STATE_ONLINE &&
-                                    Module_Offline_get_device_status(friction_r->base.offline_dev) == STATE_ONLINE,
-                   .left_angle      = friction_l->base.measure.total_angle,
-                   .right_angle     = friction_r->base.measure.total_angle,
-                   .left_speed      = friction_l->base.measure.speed_rad,
-                   .right_speed     = friction_r->base.measure.speed_rad,
-                   .reload_finished = reload_state == DARTS_SERVO_SEQUENCE_FINISHED,
-                   .reload_error    = reload_state == DARTS_SERVO_SEQUENCE_ERROR,
-    };
-    shoot_mode_update(shoot_cmd, &feedback, &shoot_mode, &load_mode);
-
-    switch (load_mode)
+    if (!Module_Offline_get_device_status(friction_l->base.offline_dev) && !Module_Offline_get_device_status(friction_r->base.offline_dev))
     {
-    case load_origin:
-        break;
-
-    case load_stop:
-        if (shoot_mode != shoot_error && shoot_mode != shoot_finished)
+        if (shoot_cmd->shoot_mode == shoot_restart)
         {
-            Motor_DJI_Start(friction_l);
-            Motor_DJI_Start(friction_r);
-            Motor_DJI_SetRef(friction_l, shoot_mode_get_left_home_angle());
-            Motor_DJI_SetRef(friction_r, shoot_mode_get_right_home_angle());
-        }
-        break;
-
-    case load_cock:
-        Motor_DJI_Start(friction_l);
-        Motor_DJI_Start(friction_r);
-        Motor_DJI_SetRef(friction_l, shoot_mode_get_left_home_angle() - 6.283185307f);
-        Motor_DJI_SetRef(friction_r, shoot_mode_get_right_home_angle() + 6.283185307f);
-        break;
-
-    case load_return:
-        Motor_DJI_Start(friction_l);
-        Motor_DJI_Start(friction_r);
-        Motor_DJI_SetRef(friction_l, shoot_mode_get_left_home_angle());
-        Motor_DJI_SetRef(friction_r, shoot_mode_get_right_home_angle());
-        break;
-
-    case load_reload:
-        Motor_DJI_Start(friction_l);
-        Motor_DJI_Start(friction_r);
-        Motor_DJI_SetRef(friction_l, shoot_mode_get_left_home_angle());
-        Motor_DJI_SetRef(friction_r, shoot_mode_get_right_home_angle());
-        if (last_load_mode != load_reload)
-        {
-            const Darts_Servo_Step_t *steps        = NULL;
-            uint8_t                   step_count   = 0U;
-            int8_t                    reload_index = shoot_mode_get_reload_index();
-            if (reload_index < 0 || !Darts_Servo_Reload_Get((uint8_t)reload_index, &steps, &step_count) ||
-                !Darts_Servo_Sequence_Start(steps, step_count))
+            if (enable_flag != 0 && shoot_cmd -> shoot_mode == shoot_restart)
             {
-                shoot_mode_set_error(shoot_reload_error, &shoot_mode, &load_mode);
+                enable_flag = 0;
+                shoot_step  = shoot_step_idle;
             }
+            return;
         }
-        break;
-    }
 
-    switch (shoot_mode)
-    {
-    case shoot_off:
-        break;
-
-    case shoot_lock:
-        Motor_Servo_SetRef(trigger, 75.0f);
-        break;
-
-    case shoot_fire:
-        Motor_Servo_SetRef(trigger, 20.0f);
-        break;
-
-    case shoot_finished:
-        Motor_DJI_Stop(friction_l);
-        Motor_DJI_Stop(friction_r);
-        break;
-
-    case shoot_error:
-        Motor_DJI_Stop(friction_l);
-        Motor_DJI_Stop(friction_r);
-        Darts_Servo_Sequence_Cancel();
-        break;
-    }
-
-    if (shoot_mode != last_shoot_mode || load_mode != last_load_mode)
-    {
-        if (shoot_mode == shoot_error)
-            LOG_E("shoot error=%d", shoot_mode_get_fault());
+        if (shoot_cmd->shoot_mode == shoot_start_1)
+        {
+            if (enable_flag != 0) return;
+            if (shoot_step == shoot_step_idle) shoot_step = shoot_step_first_cock;
+        }
+        else if (shoot_cmd->shoot_mode == shoot_start_2)
+        {
+            if (enable_flag != 1) return;
+            if (shoot_step == shoot_step_idle) shoot_step = shoot_step_third_cock;
+        }
         else
-            LOG_I("shoot_mode=%d load_mode=%d salvo=%d", shoot_mode, load_mode, shoot_mode_get_salvo_index());
+        {
+            Motor_DJI_Stop(friction_l);
+            Motor_DJI_Stop(friction_r);
+            Motor_Servo_Stop(rise_left);
+            Motor_Servo_Stop(rise_right);
+            Motor_Servo_Stop(transfer);
+            Motor_Servo_Stop(gripper);
+            Motor_Servo_Stop(trigger);
+            shoot_step = shoot_step_idle;
+            return;
+        }
 
-        last_shoot_mode = shoot_mode;
-        last_load_mode  = load_mode;
+        switch (shoot_step)
+        {
+        case shoot_step_first_cock:
+            Motor_DJI_SetRef(friction_l, trigger_station);
+            Motor_DJI_SetRef(friction_r, -trigger_station);
+            if (!shoot_mode_3508_is_arrived(friction_l, trigger_station) || !shoot_mode_3508_is_arrived(friction_r, -trigger_station)) return;
+            Motor_Servo_SetRef(trigger, 70);
+            shoot_step = shoot_step_first_lock_wait;
+            return;
+
+        case shoot_step_first_lock_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_first_return;
+            return;
+
+        case shoot_step_first_return:
+            Motor_DJI_SetRef(friction_l, 0);
+            Motor_DJI_SetRef(friction_r, 0);
+            if (!shoot_mode_3508_is_arrived(friction_l, 0) || !shoot_mode_3508_is_arrived(friction_r, 0)) return;
+            Motor_Servo_SetRef(trigger, 5);
+            shoot_step = shoot_step_first_fire_wait;
+            return;
+
+        case shoot_step_first_fire_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_second_cock;
+            return;
+
+        case shoot_step_second_cock:
+            Motor_DJI_SetRef(friction_l, trigger_station);
+            Motor_DJI_SetRef(friction_r, -trigger_station);
+            if (!shoot_mode_3508_is_arrived(friction_l, trigger_station) || !shoot_mode_3508_is_arrived(friction_r, -trigger_station)) return;
+            Motor_Servo_SetRef(trigger, 70);
+            shoot_step = shoot_step_second_lock_wait;
+            return;
+
+        case shoot_step_second_lock_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(rise_left, 20);
+            Motor_Servo_SetRef(rise_right, 150);
+            shoot_step = shoot_step_second_rise_down_wait;
+            return;
+
+        case shoot_step_second_rise_down_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(gripper, 80);
+            shoot_step = shoot_step_second_gripper_wait;
+            return;
+
+        case shoot_step_second_gripper_wait:
+            if (!shoot_mode_delay_ms(300)) return;
+            Motor_Servo_SetRef(rise_left, 150);
+            Motor_Servo_SetRef(rise_right, 20);
+            shoot_step = shoot_step_second_rise_home_wait;
+            return;
+
+        case shoot_step_second_rise_home_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_second_return;
+            return;
+
+        case shoot_step_second_return:
+            Motor_DJI_SetRef(friction_l, 0);
+            Motor_DJI_SetRef(friction_r, 0);
+            if (!shoot_mode_3508_is_arrived(friction_l, 0) || !shoot_mode_3508_is_arrived(friction_r, 0)) return;
+            Motor_Servo_SetRef(trigger, 5);
+            shoot_step = shoot_step_second_fire_wait;
+            return;
+
+        case shoot_step_second_fire_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            enable_flag = 1;
+            shoot_step  = shoot_step_idle;
+            return;
+
+        case shoot_step_third_cock:
+            Motor_DJI_SetRef(friction_l, trigger_station);
+            Motor_DJI_SetRef(friction_r, -trigger_station);
+            if (!shoot_mode_3508_is_arrived(friction_l, trigger_station) || !shoot_mode_3508_is_arrived(friction_r, -trigger_station)) return;
+            Motor_Servo_SetRef(trigger, 70);
+            shoot_step = shoot_step_third_lock_wait;
+            return;
+
+        case shoot_step_third_lock_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(transfer, 45);
+            shoot_step = shoot_step_third_transfer_out_wait;
+            return;
+
+        case shoot_step_third_transfer_out_wait:
+            if (!shoot_mode_delay_ms(700)) return;
+            Motor_Servo_SetRef(rise_left, 20);
+            Motor_Servo_SetRef(rise_right, 150);
+            shoot_step = shoot_step_third_rise_down_wait;
+            return;
+
+        case shoot_step_third_rise_down_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(gripper, 45);
+            shoot_step = shoot_step_third_gripper_wait;
+            return;
+
+        case shoot_step_third_gripper_wait:
+            if (!shoot_mode_delay_ms(300)) return;
+            Motor_Servo_SetRef(rise_left, 150);
+            Motor_Servo_SetRef(rise_right, 20);
+            Motor_Servo_SetRef(transfer, 135);
+            shoot_step = shoot_step_third_rise_home_wait;
+            return;
+
+        case shoot_step_third_rise_home_wait:
+            if (!shoot_mode_delay_ms(700)) return;
+            Motor_Servo_SetRef(rise_left, 20);
+            Motor_Servo_SetRef(rise_right, 150);
+            shoot_step = shoot_step_third_rise_down_again_wait;
+            return;
+
+        case shoot_step_third_rise_down_again_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(gripper, 80);
+            shoot_step = shoot_step_third_gripper_open_wait;
+            return;
+
+        case shoot_step_third_gripper_open_wait:
+            if (!shoot_mode_delay_ms(300)) return;
+            Motor_Servo_SetRef(rise_left, 150);
+            Motor_Servo_SetRef(rise_right, 20);
+            shoot_step = shoot_step_third_rise_home_final_wait;
+            return;
+
+        case shoot_step_third_rise_home_final_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_third_return;
+            return;
+
+        case shoot_step_third_return:
+            Motor_DJI_SetRef(friction_l, 0);
+            Motor_DJI_SetRef(friction_r, 0);
+            if (!shoot_mode_3508_is_arrived(friction_l, 0) || !shoot_mode_3508_is_arrived(friction_r, 0)) return;
+            Motor_Servo_SetRef(trigger, 5);
+            shoot_step = shoot_step_third_fire_wait;
+            return;
+
+        case shoot_step_third_fire_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_fourth_cock;
+            return;
+
+        case shoot_step_fourth_cock:
+            Motor_DJI_SetRef(friction_l, trigger_station);
+            Motor_DJI_SetRef(friction_r, -trigger_station);
+            if (!shoot_mode_3508_is_arrived(friction_l, trigger_station) || !shoot_mode_3508_is_arrived(friction_r, -trigger_station)) return;
+            Motor_Servo_SetRef(trigger, 70);
+            shoot_step = shoot_step_fourth_lock_wait;
+            return;
+
+        case shoot_step_fourth_lock_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(transfer, 45);
+            shoot_step = shoot_step_fourth_transfer_out_wait;
+            return;
+
+        case shoot_step_fourth_transfer_out_wait:
+            if (!shoot_mode_delay_ms(700)) return;
+            Motor_Servo_SetRef(rise_left, 20);
+            Motor_Servo_SetRef(rise_right, 150);
+            shoot_step = shoot_step_fourth_rise_down_wait;
+            return;
+
+        case shoot_step_fourth_rise_down_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(gripper, 45);
+            shoot_step = shoot_step_fourth_gripper_wait;
+            return;
+
+        case shoot_step_fourth_gripper_wait:
+            if (!shoot_mode_delay_ms(300)) return;
+            Motor_Servo_SetRef(rise_left, 150);
+            Motor_Servo_SetRef(rise_right, 20);
+            Motor_Servo_SetRef(transfer, 135);
+            shoot_step = shoot_step_fourth_rise_home_wait;
+            return;
+
+        case shoot_step_fourth_rise_home_wait:
+            if (!shoot_mode_delay_ms(700)) return;
+            Motor_Servo_SetRef(rise_left, 20);
+            Motor_Servo_SetRef(rise_right, 150);
+            shoot_step = shoot_step_fourth_rise_down_again_wait;
+            return;
+
+        case shoot_step_fourth_rise_down_again_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            Motor_Servo_SetRef(gripper, 80);
+            shoot_step = shoot_step_fourth_gripper_open_wait;
+            return;
+
+        case shoot_step_fourth_gripper_open_wait:
+            if (!shoot_mode_delay_ms(300)) return;
+            Motor_Servo_SetRef(rise_left, 150);
+            Motor_Servo_SetRef(rise_right, 20);
+            shoot_step = shoot_step_fourth_rise_home_final_wait;
+            return;
+
+        case shoot_step_fourth_rise_home_final_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            shoot_step = shoot_step_fourth_return;
+            return;
+
+        case shoot_step_fourth_return:
+            Motor_DJI_SetRef(friction_l, 0);
+            Motor_DJI_SetRef(friction_r, 0);
+            if (!shoot_mode_3508_is_arrived(friction_l, 0) || !shoot_mode_3508_is_arrived(friction_r, 0)) return;
+            Motor_Servo_SetRef(trigger, 5);
+            shoot_step = shoot_step_fourth_fire_wait;
+            return;
+
+        case shoot_step_fourth_fire_wait:
+            if (!shoot_mode_delay_ms(500)) return;
+            enable_flag = 2;
+            shoot_step  = shoot_step_idle;
+            return;
+
+        case shoot_step_idle:
+        default:
+            return;
+        }
+    }
+    else
+    {
+        Motor_DJI_Stop(friction_l);
+        Motor_DJI_Stop(friction_r);
+        Motor_Servo_Stop(rise_left);
+        Motor_Servo_Stop(rise_right);
+        Motor_Servo_Stop(transfer);
+        Motor_Servo_Stop(gripper);
+        Motor_Servo_Stop(trigger);
+        shoot_step = shoot_step_idle;
     }
 }

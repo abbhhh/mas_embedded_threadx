@@ -2,43 +2,52 @@
  * @Author: abbhhh 804433588@qq.com
  * @Date: 2026-07-14 13:43:04
  * @LastEditors: abbhhh 804433588@qq.com
- * @LastEditTime: 2026-07-14 13:52:03
+ * @LastEditTime: 2026-07-15 14:32:26
  * @FilePath: \mas_embedded_threadx\apps\darts\single_board\robot_func\robot_func.c
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置:
  * https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 #include "robot_func.h"
 
+#include "darts_def.h"
 #include "module_remote.h"
 #include "shoot_mode.h"
 
 #include <stddef.h>
 
-#define REMOTE_FIRE_CHANNEL 8U
 
-void RemoteControlSet(Shoot_Ctrl_Cmd_t *shoot_ctrl)
+void RemoteControlSet(Shoot_Ctrl_Cmd_t *Shoot_Ctrl)
 {
-    if (shoot_ctrl == NULL) return;
+    if ( !Shoot_Ctrl ) return;
 
-    shoot_ctrl->shoot_mode = shoot_off;
+    uint8_t state = Module_Remote_get_offline_status();
 
-    if ((Module_Remote_get_offline_status() & 0x01U) == 0U)
+    /* RC 在线 */
+    if (state & 0x01)
     {
-        shoot_remote_init();
-        return;
-    }
-
-    int16_t channel_8 = Module_Remote_get_channel(8);
-    if (channel_8 == SBUS_CHX_UP)
-    {
-        (void)shoot_remote_update(1, 0);
-    }
-    else if (channel_8 == SBUS_CHX_BIAS || channel_8 == SBUS_CHX_DOWN)
-    {
-        shoot_ctrl->shoot_mode = shoot_remote_update(0 ,1);
+        /* 摇杆 → 速度比例 (-1.0 ~ +1.0)
+         * SBUS 通道值: 中位 1024, 上 240, 下 1807 → 零偏后 -784 ~ +783 */
+        int16_t ch5 = Module_Remote_get_channel(5);
+        int16_t ch6 = Module_Remote_get_channel(6);
+        int16_t ch8 = Module_Remote_get_channel(8);
+        if (ch5 >500)
+        {
+            Shoot_Ctrl->shoot_mode    = shoot_off;
+            if (ch8 >500)
+            {
+                Shoot_Ctrl ->shoot_mode = shoot_restart;
+            }
+        }
+        else if (ch5 <500)
+        {
+            if (ch6 <500)
+                Shoot_Ctrl->shoot_mode = shoot_start_1;
+            else if (ch6 >500)
+                Shoot_Ctrl->shoot_mode = shoot_start_2;
+        }
     }
     else
     {
-        shoot_remote_init();
+        Shoot_Ctrl->shoot_mode     = shoot_off;
     }
 }

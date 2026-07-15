@@ -11,40 +11,18 @@
 
 #include <stdint.h>
 
+#define trigger_station 20  //扳机位置
+
 typedef enum
 {
-    shoot_off = 0,
-    shoot_lock,
-    shoot_fire,
-    shoot_finished,
-    shoot_error,
+    shoot_off ,
+    shoot_start_1,
+    shoot_start_2,
+    shoot_restart,
 } shoot_mode_e;
-
-typedef enum
-{
-    load_origin = 0,
-    load_stop,
-    load_cock,
-    load_return,
-    load_reload,
-} loader_mode_e;
-
-typedef enum
-{
-    shoot_no_error = 0,
-    shoot_config_error,
-    shoot_motor_offline,
-    shoot_motion_timeout,
-    shoot_sync_error,
-    shoot_reload_error,
-    shoot_reload_timeout,
-    shoot_salvo_timeout,
-    shoot_internal_error,
-} shoot_fault_e;
 
 typedef struct
 {
-    shoot_mode_e shoot_mode;
+    shoot_mode_e    shoot_mode;
 } Shoot_Ctrl_Cmd_t;
-
 #endif /* DARTS_DEF_H */
