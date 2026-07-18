@@ -30,7 +30,7 @@ void RemoteControlSet(Shoot_Ctrl_Cmd_t *Shoot_Ctrl)
         int16_t ch5 = Module_Remote_get_channel(5);
         int16_t ch6 = Module_Remote_get_channel(6);
         int16_t ch8 = Module_Remote_get_channel(8);
-        if (ch5 >500)
+        if (ch5 <500)
         {
             Shoot_Ctrl->shoot_mode    = shoot_off;
             if (ch8 >500)
@@ -38,7 +38,7 @@ void RemoteControlSet(Shoot_Ctrl_Cmd_t *Shoot_Ctrl)
                 Shoot_Ctrl ->shoot_mode = shoot_restart;
             }
         }
-        else if (ch5 <500)
+        else if (ch5 >500)
         {
             if (ch6 <500)
                 Shoot_Ctrl->shoot_mode = shoot_start_1;

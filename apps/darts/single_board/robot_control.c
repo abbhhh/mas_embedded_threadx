@@ -17,6 +17,7 @@
 static TX_THREAD                  robot_control_thread;
 APPS_STACK_SECTION static uint8_t robot_control_thread_stack[ROBOT_CONTROL_TASK_STACK_SIZE];
 static Shoot_Ctrl_Cmd_t           shoot_cmd;
+extern volatile uint8_t           enable_flag;
 
 static void robot_control_task(ULONG thread_input)
 {
@@ -24,7 +25,14 @@ static void robot_control_task(ULONG thread_input)
 
     while (1)
     {
-        RemoteControlSet(&shoot_cmd);
+        // RemoteControlSet(&shoot_cmd);
+        if (enable_flag == 0)
+            shoot_cmd.shoot_mode = shoot_start_1;
+        else if (enable_flag == 1)
+            shoot_cmd.shoot_mode = shoot_start_2;
+        else
+            shoot_cmd.shoot_mode = shoot_off;
+
         shoot_func(&shoot_cmd);
         tx_thread_sleep(ROBOT_CONTROL_TASK_SLEEP_TICKS);
     }
